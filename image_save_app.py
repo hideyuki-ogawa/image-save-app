@@ -3,6 +3,35 @@ import os
 from datetime import datetime
 from PIL import Image
 import io
+import glob
+
+def get_saved_images(save_directory="saved_images"):
+    """保存されている画像ファイルの一覧を取得"""
+    if not os.path.exists(save_directory):
+        return []
+    
+    # 対応する画像形式
+    extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp']
+    image_files = []
+    
+    for ext in extensions:
+        pattern = os.path.join(save_directory, ext)
+        image_files.extend(glob.glob(pattern))
+        # 大文字の拡張子も対応
+        pattern = os.path.join(save_directory, ext.upper())
+        image_files.extend(glob.glob(pattern))
+    
+    # ファイル名でソート（新しい順）
+    image_files.sort(key=os.path.getmtime, reverse=True)
+    return image_files
+
+def delete_image_file(filepath):
+    """画像ファイルを削除"""
+    try:
+        os.remove(filepath)
+        return True
+    except Exception as e:
+        return False
 
 def save_image_from_camera(image_data, save_directory="saved_images", image_number=1):
     """カメラで撮影した画像を保存する関数"""
@@ -49,12 +78,12 @@ def main():
         save_dir = st.text_input("保存フォルダ名", value="saved_images")
         st.info("画像は選択したフォルダに保存されます")
         
-        # 撮影モードの選択
-        st.header("📷 撮影モード")
+        # モードの選択
+        st.header("📷 モード選択")
         mode = st.radio(
-            "撮影方法を選択:",
-            ["カメラで直接撮影", "ファイルをアップロード"],
-            help="カメラ撮影ではリアルタイムで写真を撮れます"
+            "使用するモードを選択:",
+            ["カメラで直接撮影", "ファイルをアップロード", "保存済み画像を表示"],
+            help="撮影、アップロード、または保存済み画像の確認ができます"
         )
     
     # セッション状態の初期化
@@ -156,7 +185,7 @@ def main():
                         except Exception as e:
                             st.error(f"❌ 保存中にエラーが発生しました: {str(e)}")
     
-    else:  # ファイルアップロードモード
+    elif mode == "ファイルをアップロード":
         st.header("📁 ファイルアップロードモード")
         
         # ファイルアップローダー
@@ -238,6 +267,155 @@ def main():
             else:
                 st.info("📝 2枚の画像を選択してから保存ボタンが有効になります")
     
+    elif mode == "保存済み画像を表示":
+        st.header("🖼️ 保存済み画像ギャラリー")
+        
+        # 保存済み画像を取得
+        saved_images = get_saved_images(save_dir)
+        
+        if not saved_images:
+            st.info(f"📂 `{save_dir}` フォルダに保存された画像がありません")
+            st.write("カメラ撮影またはファイルアップロードで画像を保存してください。")
+        else:
+            st.write(f"**📊 合計 {len(saved_images)} 枚の画像が保存されています**")
+            
+            # 表示方法の選択
+            display_mode = st.radio(
+                "表示方法を選択:",
+                ["グリッド表示", "リスト表示"],
+                horizontal=True
+            )
+            
+            if display_mode == "グリッド表示":
+                # グリッド表示（2列）
+                cols_per_row = 2
+                for i in range(0, len(saved_images), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    
+                    for j in range(cols_per_row):
+                        if i + j < len(saved_images):
+                            filepath = saved_images[i + j]
+                            filename = os.path.basename(filepath)
+                            
+                            with cols[j]:
+                                try:
+                                    # 画像を表示
+                                    image = Image.open(filepath)
+                                    st.image(image, caption=filename, use_column_width=True)
+                                    
+                                    # 画像情報
+                                    file_size = os.path.getsize(filepath) / 1024  # KB
+                                    modify_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                                    
+                                    st.caption(f"📏 {image.size[0]}×{image.size[1]} | 💾 {file_size:.1f}KB")
+                                    st.caption(f"🕒 {modify_time.strftime('%Y/%m/%d %H:%M')}")
+                                    
+                                    # ボタン
+                                    col_download, col_delete = st.columns(2)
+                                    
+                                    with col_download:
+                                        with open(filepath, "rb") as file:
+                                            st.download_button(
+                                                label="📥",
+                                                data=file.read(),
+                                                file_name=filename,
+                                                mime=f"image/{filepath.split('.')[-1].lower()}",
+                                                key=f"download_grid_{i}_{j}",
+                                                help="ダウンロード"
+                                            )
+                                    
+                                    with col_delete:
+                                        if st.button("🗑️", key=f"delete_grid_{i}_{j}", help="削除"):
+                                            if delete_image_file(filepath):
+                                                st.success(f"✅ {filename} を削除しました")
+                                                st.rerun()
+                                            else:
+                                                st.error(f"❌ {filename} の削除に失敗しました")
+                                
+                                except Exception as e:
+                                    st.error(f"❌ 画像の読み込みエラー: {filename}")
+            
+            else:  # リスト表示
+                st.write("---")
+                for i, filepath in enumerate(saved_images):
+                    filename = os.path.basename(filepath)
+                    
+                    with st.expander(f"📸 {filename}", expanded=False):
+                        try:
+                            col1, col2 = st.columns([1, 2])
+                            
+                            with col1:
+                                # 画像表示
+                                image = Image.open(filepath)
+                                st.image(image, use_column_width=True)
+                            
+                            with col2:
+                                # 詳細情報
+                                file_size = os.path.getsize(filepath) / 1024  # KB
+                                modify_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                                
+                                st.write(f"**📁 ファイル名:** {filename}")
+                                st.write(f"**📏 解像度:** {image.size[0]} × {image.size[1]} px")
+                                st.write(f"**💾 ファイルサイズ:** {file_size:.1f} KB")
+                                st.write(f"**🕒 保存日時:** {modify_time.strftime('%Y年%m月%d日 %H:%M:%S')}")
+                                st.write(f"**📂 パス:** `{filepath}`")
+                                
+                                # アクションボタン
+                                col_btn1, col_btn2 = st.columns(2)
+                                
+                                with col_btn1:
+                                    with open(filepath, "rb") as file:
+                                        st.download_button(
+                                            label="📥 ダウンロード",
+                                            data=file.read(),
+                                            file_name=filename,
+                                            mime=f"image/{filepath.split('.')[-1].lower()}",
+                                            key=f"download_list_{i}",
+                                            use_container_width=True
+                                        )
+                                
+                                with col_btn2:
+                                    if st.button("🗑️ 削除", key=f"delete_list_{i}", use_container_width=True):
+                                        if delete_image_file(filepath):
+                                            st.success(f"✅ {filename} を削除しました")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ {filename} の削除に失敗しました")
+                        
+                        except Exception as e:
+                            st.error(f"❌ 画像の読み込みエラー: {str(e)}")
+            
+            # 一括操作
+            st.write("---")
+            st.header("🔧 一括操作")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 リロード", use_container_width=True):
+                    st.rerun()
+            
+            with col2:
+                # 全画像のZIPダウンロード機能も追加可能
+                st.write("　")  # スペーサー
+            
+            with col3:
+                if len(saved_images) > 0:
+                    if st.button("⚠️ 全て削除", type="secondary", use_container_width=True):
+                        # 確認ダイアログを表示
+                        st.warning("⚠️ この操作は元に戻せません。本当に全ての画像を削除しますか？")
+                        if st.button("🗑️ 本当に全て削除", type="secondary"):
+                            deleted_count = 0
+                            for filepath in saved_images:
+                                if delete_image_file(filepath):
+                                    deleted_count += 1
+                            
+                            if deleted_count > 0:
+                                st.success(f"✅ {deleted_count} 枚の画像を削除しました")
+                                st.rerun()
+                            else:
+                                st.error("❌ 画像の削除に失敗しました")
+    
     # 使い方説明
     with st.expander("💡 使い方ガイド"):
         st.markdown("""
@@ -253,10 +431,17 @@ def main():
         3. プレビューで確認
         4. 「2枚の画像を保存」ボタンをクリック
         
+        ### 🖼️ 保存済み画像表示モード
+        1. サイドバーで「保存済み画像を表示」を選択
+        2. **グリッド表示**: 画像を2列で一覧表示
+        3. **リスト表示**: 画像を詳細情報と共に表示
+        4. 各画像の「📥ダウンロード」「🗑️削除」が可能
+        
         ### 📝 注意事項
         - カメラ撮影では画像はJPG形式で保存されます
         - アップロードでは元の形式が保持されます
         - ファイル名にはタイムスタンプが自動で付きます
+        - 削除した画像は復元できません
         """)
 
 if __name__ == "__main__":
